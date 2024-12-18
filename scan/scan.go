@@ -1,45 +1,19 @@
 package scan
 
 import (
-	"io/ioutil"
 	"runtime"
-	"sync"
 )
 
-func ScanDirConcurrent(dir string, concurrency int) ([]*FileData, error) {
+func ScanDirConcurrent(dir string, concurrency int, threshold int64) ([]*FileData, error) {
+	CurrentPath.Store("")
+	TotalSize.Store(0)
+	TotalItems.Store(0)
+
 	root := newRootFileData(dir)
-
-	if concurrency == 0 {
-		concurrency = DefaultConcurrency()
-	}
-
-	ch := make(chan *FileData)
-	closeWait := &sync.WaitGroup{}
-
-	var wait sync.WaitGroup
-	wait.Add(concurrency)
-	for i := 0; i < concurrency; i++ {
-		go func() {
-			for file := range ch {
-				scanDir(file, ch, closeWait)
-				closeWait.Done()
-			}
-			wait.Done()
-		}()
-	}
-
-	err := scanDir(root, ch, closeWait)
-	if err != nil {
-		return nil, err
-	}
-
-	go func() {
-		closeWait.Wait()
-		close(ch)
-	}()
-
-	wait.Wait()
-
+	pool := NewScanPool(concurrency, threshold)
+	pool.Start()
+	pool.AddTask(root)
+	pool.Wait()
 	return root.Children, nil
 }
 
@@ -51,29 +25,4 @@ func DefaultConcurrency() int {
 	}
 
 	return numCPU
-}
-
-func scanDir(parent *FileData, ch chan *FileData, closeWait *sync.WaitGroup) error {
-	if !parent.Root() && (parent.size != -1 || !parent.Info.IsDir()) {
-		return nil
-	}
-
-	files, err := ioutil.ReadDir(parent.Path())
-	if err != nil {
-		return err
-	}
-
-	children := []*FileData{}
-	closeWait.Add(len(files))
-	for _, file := range files {
-		f := newFileData(parent, file)
-		go func() {
-			ch <- f
-		}()
-
-		children = append(children, f)
-	}
-
-	parent.Children = children
-	return nil
 }

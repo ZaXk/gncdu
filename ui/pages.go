@@ -77,8 +77,21 @@ func (page *ScanningPage) Show() {
 				p := count % 7
 				s := string(dots[0:p])
 				b := string(spaces[0:(6 - p)])
+
+				// 获取当前进度
+				path := "/"
+				if cp := scan.CurrentPath.Load(); cp != nil {
+					path = cp.(string)
+					if len(path) > 40 {
+						path = "..." + path[len(path)-37:]
+					}
+				}
+				size := scan.TotalSize.Load()
+				items := scan.TotalItems.Load()
+
 				page.app.QueueUpdateDraw(func() {
-					modal.SetText(fmt.Sprintf("Scanning %s%s\n\nTime %ds", s, b, int(time.Now().Sub(start).Seconds())))
+					modal.SetText(fmt.Sprintf("Scanning %s%s\nPath: %s\nSize: %s    Items: %d\nTime %ds",
+						s, b, path, scan.ToHumanSize(size), items, int(time.Now().Sub(start).Seconds())))
 				})
 			case <-page.done:
 				return
@@ -115,10 +128,10 @@ func (p *ResultPage) Show() {
 	offset := 1
 	var title string
 	if p.parent != nil {
-		if !p.parent.Root() {
+		if !p.parent.Root() && p.parent.Parent != nil {
 			offset = 2
 		}
-		title = p.parent.Path()
+		title = fmt.Sprintf("%s  %s", scan.ToHumanSize(p.parent.Size()), p.parent.Path())
 	}
 
 	selectedStyle := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorWhite)
@@ -132,20 +145,30 @@ func (p *ResultPage) Show() {
 				return
 			}
 
-			if row == offset-1 {
+			if row == offset-1 && p.parent != nil && !p.parent.Root() && p.parent.Parent != nil {
 				page := NewResultPage(p.app, p.parent.Parent.Children, p.parent.Parent)
-				navigator.Push(page)
+				p.navigator.Push(page)
 				return
 			}
 
 			file := p.files[row-offset]
-			if !file.Info.IsDir() {
+			if !file.IsDir() {
 				return
 			}
 			page := NewResultPage(p.app, file.Children, file)
-			navigator.Push(page)
+			p.navigator.Push(page)
 		})
+
 	table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyBackspace || event.Key() == tcell.KeyBackspace2 {
+			if p.parent != nil && !p.parent.Root() && p.parent.Parent != nil {
+				page := NewResultPage(p.app, p.parent.Parent.Children, p.parent.Parent)
+				p.navigator.Push(page)
+				return nil
+			}
+			return event
+		}
+
 		if event.Rune() == 'd' {
 			row, _ := table.GetSelection()
 			if row == 0 {
@@ -159,13 +182,12 @@ func (p *ResultPage) Show() {
 			confirm := func() {
 				err := file.Delete()
 				if err != nil {
-					// TODO
 					return
 				}
 				p.files = append(p.files[:i], p.files[i+1:]...)
 				p.parent.SetChildren(p.files)
 			}
-			navigator.Push(NewDeleteConfirmPage(p.app, file.Info.Name(), confirm))
+			p.navigator.Push(NewDeleteConfirmPage(p.app, file.Name(), confirm))
 		}
 		return event
 	})
@@ -176,14 +198,14 @@ func (p *ResultPage) Show() {
 	table.SetCell(0, 2, tview.NewTableCell("").SetTextColor(color).SetSelectable(false))
 	table.SetCell(0, 3, tview.NewTableCell("Items").SetTextColor(color).SetSelectable(false))
 
-	if p.parent != nil && !p.parent.Root() {
+	if p.parent != nil && !p.parent.Root() && p.parent.Parent != nil {
 		table.SetCell(1, 0, tview.NewTableCell("/.."))
 	}
 
 	var maxSize int64
 	for i, file := range p.files {
 		nameColor := tcell.ColorWhite
-		if file.Info.IsDir() {
+		if file.IsDir() {
 			nameColor = tcell.ColorDeepSkyBlue
 		}
 

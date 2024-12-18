@@ -10,6 +10,7 @@ import (
 )
 
 var cFlag = flag.Int("c", scan.DefaultConcurrency(), "the number of concurrent scanners, default is number of CPU")
+var thresholdFlag = flag.Int64("t", 0, "threshold in MB for small files grouping (0 means no grouping)")
 var helpFlag = flag.Bool("help", false, "help")
 
 func main() {
@@ -33,12 +34,10 @@ func main() {
 	}
 
 	ui.ShowUI(func() ([]*scan.FileData, error) {
-		files, err := scan.ScanDirConcurrent(dir, *cFlag)
-
+		files, err := scan.ScanDirConcurrent(dir, *cFlag, *thresholdFlag*scan.MB)
 		if err != nil {
 			return nil, err
 		}
-
 		return files, nil
 	})
 }
